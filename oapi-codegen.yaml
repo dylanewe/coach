@@ -1,0 +1,5 @@
+package: gen
+generate:
+  models: true
+  client: true
+output: internal/adapters/intervals/gen/client_gen.go

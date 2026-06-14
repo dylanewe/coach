@@ -1,0 +1,35 @@
+# Binaries
+bin/
+coachd
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test & build artifacts
+*.test
+*.out
+*.prof
+*.cover
+coverage.txt
+coverage.html
+
+# Environment files
+*.env
+!.env.example
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+tmp/
+temp/
