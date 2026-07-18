@@ -10,8 +10,23 @@ import (
 	"github.com/dylanewe/coach/internal/ports"
 )
 
-// Allowed days of week for workouts: Sunday(0), Wednesday(3), Friday(5).
-var allowedDays = map[int]bool{0: true, 3: true, 5: true}
+// defaultSchedule is used when an athlete profile does not define a valid schedule.
+func defaultSchedule() []domain.ScheduledDay {
+	return []domain.ScheduledDay{
+		{DayOfWeek: 0, Type: domain.WorkoutLongRun},
+		{DayOfWeek: 3, Type: domain.WorkoutEasy},
+		{DayOfWeek: 5, Type: domain.WorkoutTempoInterval},
+	}
+}
+
+// scheduleForProfile returns the configured weekly schedule, falling back to the
+// default schedule if the profile template is missing or invalid.
+func scheduleForProfile(profile domain.AthleteProfile) []domain.ScheduledDay {
+	if profile.ValidateWeeklySchedule() == nil {
+		return profile.WeeklyTemplate
+	}
+	return defaultSchedule()
+}
 
 // ValidateAndNormalize checks an LLM-generated plan for basic correctness and
 // clamps distances to safe ranges. It returns the cleaned plan and a list of
@@ -25,6 +40,12 @@ func ValidateAndNormalize(plan ports.WeeklyPlan, summary domain.WeekSummary, pro
 		return plan, warnings, fmt.Errorf("no workouts in plan")
 	}
 
+	schedule := scheduleForProfile(profile)
+	expected := make(map[int]string, len(schedule))
+	for _, d := range schedule {
+		expected[d.DayOfWeek] = d.Type
+	}
+
 	seen := make(map[int]bool)
 	var cleaned []domain.Workout
 	var totalDist float64
@@ -32,11 +53,12 @@ func ValidateAndNormalize(plan ports.WeeklyPlan, summary domain.WeekSummary, pro
 	now := time.Now()
 
 	for _, w := range plan.Workouts {
-		// day is an absolute offset from today (as produced by parseWeeklyPlan and FallbackPlan).
+		// day is an absolute offset from today (as produced by ParseWeeklyPlan and FallbackPlan).
 		targetDate := now.AddDate(0, 0, w.Day)
 		wd := int(targetDate.Weekday())
 
-		if !allowedDays[wd] {
+		category, ok := expected[wd]
+		if !ok {
 			warnings = append(warnings, fmt.Sprintf("Ignoring workout on disallowed day %s", targetDate.Weekday()))
 			continue
 		}
@@ -46,19 +68,19 @@ func ValidateAndNormalize(plan ports.WeeklyPlan, summary domain.WeekSummary, pro
 		}
 		seen[wd] = true
 
-		slot, ok := slotFor(phase, wd)
+		slot, ok := slotFor(phase, category)
 		if !ok {
-			warnings = append(warnings, fmt.Sprintf("No template for %s in %s phase", targetDate.Weekday(), phase))
+			warnings = append(warnings, fmt.Sprintf("No template for %s in %s phase", category, phase))
 			cleaned = append(cleaned, w)
 			continue
 		}
 
 		// Clamp distance to template range.
 		if w.Distance < float64(slot.MinDist) {
-			warnings = append(warnings, fmt.Sprintf("%s distance %.0f m below template min %d m; clamping", slot.Type, w.Distance, slot.MinDist))
+			warnings = append(warnings, fmt.Sprintf("%s distance %.0f m below template min %d m; clamping", category, w.Distance, slot.MinDist))
 			w.Distance = float64(slot.MinDist)
 		} else if w.Distance > float64(slot.MaxDist) {
-			warnings = append(warnings, fmt.Sprintf("%s distance %.0f m above template max %d m; clamping", slot.Type, w.Distance, slot.MaxDist))
+			warnings = append(warnings, fmt.Sprintf("%s distance %.0f m above template max %d m; clamping", category, w.Distance, slot.MaxDist))
 			w.Distance = float64(slot.MaxDist)
 		}
 
@@ -67,17 +89,17 @@ func ValidateAndNormalize(plan ports.WeeklyPlan, summary domain.WeekSummary, pro
 			w.Type = "Run"
 		}
 		if strings.TrimSpace(w.Name) == "" {
-			w.Name = slot.Type
+			w.Name = defaultNameForCategory(category)
 		}
 
 		totalDist += w.Distance
 		cleaned = append(cleaned, w)
 	}
 
-	// Must have all three required days.
-	for d, name := range map[int]string{0: "Sunday Long Run", 3: "Wednesday Easy", 5: "Friday Tempo/Interval"} {
-		if !seen[d] {
-			return plan, warnings, fmt.Errorf("missing required workout: %s", name)
+	// Must have every configured day.
+	for _, d := range schedule {
+		if !seen[d.DayOfWeek] {
+			return plan, warnings, fmt.Errorf("missing required workout on %s (%s)", time.Weekday(d.DayOfWeek), d.Type)
 		}
 	}
 
@@ -116,9 +138,15 @@ func FallbackPlan(summary domain.WeekSummary, profile domain.AthleteProfile) por
 		acwrReduction = 0.85
 	}
 
+	schedule := scheduleForProfile(profile)
 	now := time.Now()
-	workouts := make([]domain.Workout, 0, len(tmpl.Slots))
-	for _, slot := range tmpl.Slots {
+	workouts := make([]domain.Workout, 0, len(schedule))
+	for _, day := range schedule {
+		slot, ok := tmpl.Slots[day.Type]
+		if !ok {
+			continue
+		}
+
 		// Progress distance through the phase.
 		dist := progressiveDistance(slot.MinDist, slot.MaxDist, weekOfPhase, tmpl.Length)
 
@@ -132,23 +160,21 @@ func FallbackPlan(summary domain.WeekSummary, profile domain.AthleteProfile) por
 			dist = slot.MinDist
 		}
 
-		targetDate := nextMonday.AddDate(0, 0, slot.DayOfWeek-int(time.Monday))
-		// Adjust because Monday=1 in Go; our offset from nextMonday should be slot.DayOfWeek-1.
-		dayOffset := slot.DayOfWeek - int(time.Monday)
+		dayOffset := day.DayOfWeek - int(time.Monday)
 		if dayOffset < 0 {
 			dayOffset += 7
 		}
-		targetDate = nextMonday.AddDate(0, 0, dayOffset)
+		targetDate := nextMonday.AddDate(0, 0, dayOffset)
 
 		workouts = append(workouts, domain.Workout{
 			AthleteID:   profile.ID,
-			Name:        slot.Type,
-			Description: fmt.Sprintf("%s — target %.1f km", slot.Type, float64(dist)/1000),
+			Name:        defaultNameForCategory(day.Type),
+			Description: fmt.Sprintf("%s — target %.1f km", defaultNameForCategory(day.Type), float64(dist)/1000),
 			Type:        "Run",
 			SubType:     "NONE",
 			Day:         DaysBetween(now, targetDate),
 			Distance:    float64(dist),
-			MovingTime:  estimateMovingTime(dist),
+			MovingTime:  EstimateMovingTime(dist),
 			Target:      "PACE",
 			Tags:        []string{strings.ToLower(string(phase))},
 			CreatedAt:   now,
@@ -165,6 +191,20 @@ func FallbackPlan(summary domain.WeekSummary, profile domain.AthleteProfile) por
 	}
 
 	return ports.WeeklyPlan{Report: report, Workouts: workouts}
+}
+
+// defaultNameForCategory returns a human-readable workout name for a category.
+func defaultNameForCategory(category string) string {
+	switch category {
+	case domain.WorkoutEasy:
+		return "Easy Run"
+	case domain.WorkoutTempoInterval:
+		return "Tempo or Intervals"
+	case domain.WorkoutLongRun:
+		return "Long Run"
+	default:
+		return category
+	}
 }
 
 // progressiveDistance linearly increases distance from min to max over the phase.
@@ -197,8 +237,8 @@ func DaysBetween(a, b time.Time) int {
 	return int(bUTC.Sub(aUTC).Hours() / 24)
 }
 
-// estimateMovingTime uses a conservative 6:00/km pace for planning.
-func estimateMovingTime(distM int) int {
+// EstimateMovingTime uses a conservative 6:00/km pace for planning.
+func EstimateMovingTime(distM int) int {
 	paceSecPerKm := 360 // 6:00/km
 	return distM * paceSecPerKm / 1000
 }

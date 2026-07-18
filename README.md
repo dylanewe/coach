@@ -9,9 +9,29 @@ The coach tracks periodization phase, weekly load, ACWR, CTL/ATL/TSB, and uses t
 - **Saturday @ 23:00** — Weekly summary + next week's plan
 
 Hard constraints in the coaching prompt:
+- **1–2 easy runs**
+- **1 tempo / interval / speed work session**
+- **1 long run**
+
+The default weekly schedule is:
 - **Sunday**: Long Run
 - **Wednesday**: Easy Run
 - **Friday**: Tempo / Interval / Speed Work
+
+You can customize the days by editing the `athlete_profile` document in MongoDB. The `weekly_template` field is a list of `{day_of_week, type}` entries, where `day_of_week` follows Go's weekday convention (`0=Sunday`, `1=Monday`, … `6=Saturday`) and `type` is one of `Easy`, `Tempo/Interval`, or `Long Run`.
+
+Example 4-day schedule:
+```json
+{
+  "_id": "athlete",
+  "weekly_template": [
+    { "day_of_week": 0, "type": "Long Run" },
+    { "day_of_week": 2, "type": "Easy" },
+    { "day_of_week": 4, "type": "Tempo/Interval" },
+    { "day_of_week": 5, "type": "Easy" }
+  ]
+}
+```
 
 ## Quick Start
 

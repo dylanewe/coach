@@ -19,8 +19,18 @@ func dayOffsetForWeekday(wd time.Weekday) int {
 	return diff
 }
 
+func defaultTestProfile() domain.AthleteProfile {
+	return domain.AthleteProfile{
+		RaceDate: time.Date(2026, 12, 12, 0, 0, 0, 0, time.UTC),
+		WeeklyTemplate: []domain.ScheduledDay{
+			{DayOfWeek: 0, Type: domain.WorkoutLongRun},
+			{DayOfWeek: 3, Type: domain.WorkoutEasy},
+			{DayOfWeek: 5, Type: domain.WorkoutTempoInterval},
+		},
+	}
+}
+
 func TestFallbackPlan(t *testing.T) {
-	race := time.Date(2026, 12, 12, 0, 0, 0, 0, time.UTC)
 	summary := domain.WeekSummary{
 		WeekStart:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 		WeekEnd:     time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
@@ -28,7 +38,7 @@ func TestFallbackPlan(t *testing.T) {
 		WeekOfPhase: 2,
 		Acwr:        0.9,
 	}
-	profile := domain.AthleteProfile{RaceDate: race}
+	profile := defaultTestProfile()
 
 	plan := FallbackPlan(summary, profile)
 
@@ -50,8 +60,7 @@ func TestFallbackPlan(t *testing.T) {
 	}
 }
 
-func TestValidateAndNormalizeRejectsMissingDay(t *testing.T) {
-	race := time.Date(2026, 12, 12, 0, 0, 0, 0, time.UTC)
+func TestFallbackPlanFourDaySchedule(t *testing.T) {
 	summary := domain.WeekSummary{
 		WeekStart:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 		WeekEnd:     time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
@@ -59,7 +68,45 @@ func TestValidateAndNormalizeRejectsMissingDay(t *testing.T) {
 		WeekOfPhase: 2,
 		Acwr:        0.9,
 	}
-	profile := domain.AthleteProfile{RaceDate: race}
+	profile := domain.AthleteProfile{
+		RaceDate: time.Date(2026, 12, 12, 0, 0, 0, 0, time.UTC),
+		WeeklyTemplate: []domain.ScheduledDay{
+			{DayOfWeek: 0, Type: domain.WorkoutLongRun},
+			{DayOfWeek: 2, Type: domain.WorkoutEasy},
+			{DayOfWeek: 4, Type: domain.WorkoutTempoInterval},
+			{DayOfWeek: 5, Type: domain.WorkoutEasy},
+		},
+	}
+
+	plan := FallbackPlan(summary, profile)
+
+	if len(plan.Workouts) != 4 {
+		t.Fatalf("expected 4 workouts, got %d", len(plan.Workouts))
+	}
+
+	days := make(map[int]bool)
+	for _, w := range plan.Workouts {
+		targetDate := time.Now().AddDate(0, 0, w.Day)
+		wd := int(targetDate.Weekday())
+		if days[wd] {
+			t.Errorf("duplicate workout on weekday %d", wd)
+		}
+		days[wd] = true
+	}
+	if !days[0] || !days[2] || !days[4] || !days[5] {
+		t.Errorf("expected workouts on Sunday(0), Tuesday(2), Thursday(4), Friday(5); got %v", days)
+	}
+}
+
+func TestValidateAndNormalizeRejectsMissingDay(t *testing.T) {
+	summary := domain.WeekSummary{
+		WeekStart:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+		WeekEnd:     time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
+		Phase:       string(analytics.PhaseBase),
+		WeekOfPhase: 2,
+		Acwr:        0.9,
+	}
+	profile := defaultTestProfile()
 
 	// Only Sunday and Wednesday — missing Friday.
 	plan := ports.WeeklyPlan{
@@ -76,7 +123,6 @@ func TestValidateAndNormalizeRejectsMissingDay(t *testing.T) {
 }
 
 func TestValidateAndNormalizeClampsDistance(t *testing.T) {
-	race := time.Date(2026, 12, 12, 0, 0, 0, 0, time.UTC)
 	summary := domain.WeekSummary{
 		WeekStart:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
 		WeekEnd:     time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
@@ -84,7 +130,7 @@ func TestValidateAndNormalizeClampsDistance(t *testing.T) {
 		WeekOfPhase: 2,
 		Acwr:        0.9,
 	}
-	profile := domain.AthleteProfile{RaceDate: race}
+	profile := defaultTestProfile()
 
 	// Sunday long run of 30 km should be clamped to Base max 12 km.
 	plan := ports.WeeklyPlan{
@@ -104,5 +150,30 @@ func TestValidateAndNormalizeClampsDistance(t *testing.T) {
 		if w.Name == "Long Run" && w.Distance != 12000 {
 			t.Errorf("expected long run clamped to 12000, got %.0f", w.Distance)
 		}
+	}
+}
+
+func TestValidateAndNormalizeRejectsDisallowedDay(t *testing.T) {
+	summary := domain.WeekSummary{
+		WeekStart:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+		WeekEnd:     time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC),
+		Phase:       string(analytics.PhaseBase),
+		WeekOfPhase: 2,
+		Acwr:        0.9,
+	}
+	profile := defaultTestProfile()
+
+	// Replace Friday with a Thursday tempo; the configured schedule expects Friday.
+	plan := ports.WeeklyPlan{
+		Workouts: []domain.Workout{
+			{Day: dayOffsetForWeekday(time.Sunday), Name: "Long Run", Distance: 10000},
+			{Day: dayOffsetForWeekday(time.Wednesday), Name: "Easy", Distance: 5000},
+			{Day: dayOffsetForWeekday(time.Thursday), Name: "Tempo", Distance: 5000},
+		},
+	}
+
+	_, _, err := ValidateAndNormalize(plan, summary, profile)
+	if err == nil {
+		t.Error("expected error when a configured day is missing")
 	}
 }

@@ -165,9 +165,9 @@ func (r *Repository) defaultProfile() *domain.AthleteProfile {
 		ID:       "athlete",
 		RaceDate: r.raceDate,
 		WeeklyTemplate: []domain.ScheduledDay{
-			{DayOfWeek: 0, Type: "Long Run"},
-			{DayOfWeek: 3, Type: "Easy"},
-			{DayOfWeek: 5, Type: "Tempo/Interval"},
+			{DayOfWeek: 0, Type: domain.WorkoutLongRun},
+			{DayOfWeek: 3, Type: domain.WorkoutEasy},
+			{DayOfWeek: 5, Type: domain.WorkoutTempoInterval},
 		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),

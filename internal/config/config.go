@@ -33,6 +33,11 @@ type Config struct {
 		To       string
 		From     string
 	}
+	Notify struct {
+		BaseURL string
+		APIKey  string
+		Channel string
+	}
 	App struct {
 		SyncCron    string
 		WeeklyCron  string
@@ -77,6 +82,10 @@ func Load() (*Config, error) {
 	cfg.Email.To = os.Getenv("EMAIL_TO")
 	cfg.Email.From = os.Getenv("EMAIL_FROM")
 
+	cfg.Notify.BaseURL = getEnvDefault("NOTIFY_BASE_URL", "http://localhost:8080")
+	cfg.Notify.APIKey = os.Getenv("NOTIFY_API_KEY")
+	cfg.Notify.Channel = getEnvDefault("NOTIFY_CHANNEL", "email")
+
 	cfg.App.SyncCron = getEnvDefault("SYNC_CRON", "0 23 * * *")
 	cfg.App.WeeklyCron = getEnvDefault("WEEKLY_CRON", "0 23 * * 6")
 	cfg.App.HistoryDays = mustAtoi(getEnvDefault("HISTORY_DAYS", "30"))
@@ -101,8 +110,11 @@ func Load() (*Config, error) {
 	if cfg.LLM.Provider == "kimi" && cfg.LLM.APIKey == "" {
 		return nil, fmt.Errorf("LLM_API_KEY is required for kimi provider")
 	}
-	if cfg.Email.To == "" || cfg.Email.From == "" {
-		return nil, fmt.Errorf("EMAIL_TO and EMAIL_FROM are required")
+	if cfg.Notify.APIKey == "" {
+		return nil, fmt.Errorf("NOTIFY_API_KEY is required")
+	}
+	if cfg.Notify.Channel != "email" && cfg.Notify.Channel != "telegram" {
+		return nil, fmt.Errorf("NOTIFY_CHANNEL must be 'email' or 'telegram'")
 	}
 
 	return &cfg, nil

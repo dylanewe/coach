@@ -142,6 +142,15 @@ func mapActivity(a gen.Activity) domain.Activity {
 		// Parse it as UTC so the local calendar date is preserved for grouping.
 		start, _ = time.ParseInLocation(iso8601Local, *a.StartDateLocal, time.UTC)
 	}
+
+	source := safeSource(a.Source)
+	cadence := safeFloat(a.AverageCadence)
+	// COROS reports cadence as steps per foot per minute in some exports;
+	// Intervals.icu surfaces this as ~half the true SPM value.
+	if source == "COROS" && cadence > 0 {
+		cadence *= 2
+	}
+
 	return domain.Activity{
 		ID:                 safeString(a.Id),
 		Name:               safeString(a.Name),
@@ -155,7 +164,7 @@ func mapActivity(a gen.Activity) domain.Activity {
 		AverageSpeed:       safeFloat(a.AverageSpeed),
 		AverageHeartrate:   safeFloatFromInt32(a.AverageHeartrate),
 		MaxHeartrate:       safeFloatFromInt32(a.MaxHeartrate),
-		AverageCadence:     safeFloat(a.AverageCadence),
+		AverageCadence:     cadence,
 		ICULoad:            safeFloatFromInt32(a.IcuTrainingLoad),
 		ICUCTL:             safeFloat(a.IcuCtl),
 		ICUATL:             safeFloat(a.IcuAtl),
@@ -167,6 +176,13 @@ func mapActivity(a gen.Activity) domain.Activity {
 }
 
 func safeSubType(s *gen.ActivitySubType) string {
+	if s == nil {
+		return ""
+	}
+	return string(*s)
+}
+
+func safeSource(s *gen.ActivitySource) string {
 	if s == nil {
 		return ""
 	}

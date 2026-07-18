@@ -1,4 +1,4 @@
-.PHONY: build run test generate clean docker-build
+.PHONY: build run test generate clean docker-build sync sync-force weekly
 
 BINARY=coachd
 
@@ -19,3 +19,12 @@ clean:
 
 docker-build:
 	docker build -t coachd:latest .
+
+sync: build
+	./bin/$(BINARY) -sync
+
+sync-force: build
+	./bin/$(BINARY) -sync -force
+
+weekly: build
+	./bin/$(BINARY) -weekly
